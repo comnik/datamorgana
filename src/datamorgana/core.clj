@@ -135,7 +135,7 @@
   (s/def :user/knows :db/id)
   (s/def :user/partner :db/id)
 
-  ()
+  (d/pull-many (create-db schema) '[:user/name {:user/partner [:user/name]}] (range 10))
 
   (def db0
     (let [tx (d/pull-many (create-db schema) '[:user/name {:user/knows [:user/name]}] (range 100))]
