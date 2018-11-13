@@ -6,12 +6,12 @@
    [datascript.core :as d]
    [datascript.db :as db-internals]))
 
-(s/def ::eid (s/and integer? pos?))
+(s/def :db/id (s/and integer? pos?))
 
 (defrecord Generators [eids attributes values avs eavs])
 
 (defn make-generators [schema]
-  (let [eids       (s/gen ::eid)
+  (let [eids       (s/gen :db/id)
         attributes (s/gen (set (keys schema)))
         values     (fn [a] (s/gen a))
         avs        (gen/bind attributes
@@ -120,4 +120,34 @@
          [(= ?uchar ?dchar)]] (create-db schema 100))
 
   (d/pull-many (create-db schema) '[:doc/name :doc/level] (range 5))
+  )
+
+(comment
+
+  (def schema
+    {:user/name    {:db/unique :db.unique/identity}
+     :user/partner {:db/valueType   :db.type/ref
+                    :db/cardinality :db.cardinality/one}
+     :user/knows   {:db/valueType   :db.type/ref
+                    :db/cardinality :db.cardinality/many}})
+
+  (s/def :user/name (s/with-gen string? #(s/gen #{"Alice" "Bob" "Mabel" "Dipper" "Nadine" "Lesli" "Arianne" "Elidia" "Dina" "Laurena" "Ricky" "Laveta" "Veola" "Ellie" "Keneth" "Tomika" "Gwenn" "Aletha" "Jama" "Yasuko" "Latonia" "Clarita" "Caroll" "Delfina" "Hanna" "Eden" "Alesha" "Essie" "Lorette" "Greg" "Minda" "Natasha" "Geneva" "Taneka" "Rosita" "Oma" "Devorah" "Roxann" "Alec" "Colton" "Malena" "Laurinda" "Wendolyn" "Jarrod" "Denis" "Hana" "Melanie" "Danika" "Bettyann" "Lorinda" "Arlen" "Verdie" "Kristine" "Tameka"})))
+  (s/def :user/knows :db/id)
+  (s/def :user/partner :db/id)
+
+  ()
+
+  (def db0
+    (let [tx (d/pull-many (create-db schema) '[:user/name {:user/knows [:user/name]}] (range 100))]
+      (d/db-with (d/empty-db schema) tx)))
+
+  (d/q '[:find ?u1 ?u2 ?x
+         :where
+         [?x :user/name "Alice"]
+         [?u1 :user/knows ?x]
+         [?u2 :user/knows ?x]
+         [(not= ?u1 ?u2)]] db0)
+
+  (d/pull-many db0 '[:db/id :user/name {:user/knows [:user/name]}] [36])
+
   )
