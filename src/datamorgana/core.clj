@@ -8,38 +8,53 @@
 
 (s/def ::eid (s/and integer? pos?))
 
+(defrecord Generators [eids attributes values avs eavs])
+
+(defn make-generators [schema]
+  (let [eids       (s/gen ::eid)
+        attributes (s/gen (set (keys schema)))
+        values     (fn [a] (s/gen a))
+        avs        (gen/bind attributes
+                             (fn [a]
+                               (gen/fmap (fn [v] [a v]) (values a))))
+        eavs       (gen/bind (gen/tuple eids attributes)
+                             (fn [[e a]]
+                               (gen/fmap (fn [v] [e a v]) (values a))))]
+    (Generators. eids attributes values avs eavs)))
+
+(defn generate-pattern [^Generators generators pattern volume]
+  (let [sample                                    #(gen/sample % volume)
+        [e a v]                                   pattern
+        {:keys [eids attributes values avs eavs]} generators]
+    (db-internals/case-tree
+     [e a (some? v)]
+     [[(db-internals/datom e a v)] ; e a v
+      (sample (gen/fmap #(db-internals/datom e a %) (values a))) ; e a _
+      (sample (gen/fmap #(db-internals/datom e % v) attributes)) ; e _ v @TODO correct type
+      (sample (gen/fmap (fn [[a v]] (db-internals/datom e a v)) avs)) ; e _ _
+      (sample (gen/fmap #(db-internals/datom % a v) eids)) ; _ a v
+      (sample (gen/fmap (fn [[e v]] (db-internals/datom e a v)) (gen/tuple eids (values a)))) ; _ a _
+      (sample (gen/fmap (fn [[e v]] (db-internals/datom e a v)) (gen/tuple eids attributes))) ; _ _ v 
+      (sample (gen/fmap #(apply db-internals/datom %) eavs)) ; _ _ _
+      ])))
+
 (defn- components->pattern [index [c0 c1 c2]]
   (case index
     :eavt [c0 c1 c2]
     :aevt [c1 c0 c2]
     :avet [c2 c0 c1]))
 
-(defn- generate-pattern [db pattern volume]
-  (let [sample  #(gen/sample % volume)
-        [e a v] pattern]
-    (db-internals/case-tree
-     [e a (some? v)]                
-     [[(db-internals/datom e a v)] ; e a v
-      (sample (gen/fmap #(db-internals/datom e a %) (s/gen a))) ; e a _
-      (sample (gen/fmap #(db-internals/datom e % v) (.-attr-gen db))) ; e _ v @TODO generate values of correct type here
-      (sample (gen/fmap (fn [[a v]] (db-internals/datom e a v)) (.-av-gen db))) ; e _ _
-      (sample (gen/fmap #(db-internals/datom % a v) (.-eid-gen db))) ; _ a v
-      (sample (gen/fmap (fn [[e v]] (db-internals/datom e a v)) (s/gen (s/tuple ::eid a)))) ; _ a _
-      (sample (gen/fmap (fn [[e v]] (db-internals/datom e a v)) (gen/tuple (.-eid-gen db) (.-attr-gen db)))) ; _ _ v
-      (sample (gen/fmap #(apply db-internals/datom %) (.-eav-gen db))) ; _ _ _
-      ])))
-
-(defrecord FnDB [schema rschema volume eid-gen attr-gen av-gen eav-gen]
+(defrecord FnDB [schema rschema volume generators]
   db-internals/IDB
   (-schema [db] (.-schema db))
   (-attrs-by [db property] ((.-rschema db) property))
 
   db-internals/ISearch
-  (-search [db pattern] (generate-pattern db pattern (.-volume db)))
+  (-search [db pattern] (generate-pattern (.-generators db) pattern (.-volume db)))
 
   db-internals/IIndexAccess
   (-datoms [db index cs]
-    (drop (rand-int 10) (generate-pattern db (components->pattern index cs) (.-volume db))))
+    (drop (rand-int 10) (generate-pattern (.-generators db) (components->pattern index cs) (.-volume db))))
   (-seek-datoms [db index cs]
     (throw (ex-info "Not implemented: -seek-datoms" {})))
   (-index-range [db attr start end]
@@ -48,16 +63,21 @@
 (defn create-db
   ([schema] (create-db schema 10))
   ([schema volume]
-   (let [db       (d/empty-db schema)
-         eid-gen  (s/gen ::eid)
-         attr-gen (s/gen (set (keys schema)))
-         av-gen   (gen/bind attr-gen
-                            (fn [a]
-                              (gen/fmap (fn [v] [a v]) (s/gen a))))
-         eav-gen (gen/bind (gen/tuple eid-gen attr-gen)
-                           (fn [[e a]]
-                             (gen/fmap (fn [v] [e a v]) (s/gen a))))]
-     (FnDB. (.-schema db) (.-rschema db) volume eid-gen attr-gen av-gen eav-gen))))
+   (let [db         (d/empty-db schema)
+         generators (make-generators schema)]
+     (FnDB. (.-schema db) (.-rschema db) volume generators))))
+
+;; TEST
+
+(comment
+  (let [db (create-db {:user/name  {:db/unique :db.unique/identity}
+                       :user/knows {:db/valueType   :db.type/ref
+                                    :db/cardinality :db.cardinality/many}})]
+    (satisfies? db-internals/IDB db)
+    (satisfies? db-internals/ISearch db)
+    (satisfies? db-internals/IIndexAccess db)
+    (d/db? db))
+  )
 
 ;; DEMO
 
@@ -79,12 +99,6 @@
   (s/def :doc/level :level/ident)
   (s/def :user/name (s/with-gen string? #(s/gen #{"Alice" "Bob" "Mabel" "Dipper" "Nadine" "Lesli" "Arianne" "Elidia" "Dina" "Laurena" "Ricky" "Laveta" "Veola" "Ellie" "Keneth" "Tomika" "Gwenn" "Aletha" "Jama" "Yasuko" "Latonia" "Clarita" "Caroll" "Delfina" "Hanna" "Eden" "Alesha" "Essie" "Lorette" "Greg" "Minda" "Natasha" "Geneva" "Taneka" "Rosita" "Oma" "Devorah" "Roxann" "Alec" "Colton" "Malena" "Laurinda" "Wendolyn" "Jarrod" "Denis" "Hana" "Melanie" "Danika" "Bettyann" "Lorinda" "Arlen" "Verdie" "Kristine" "Tameka"})))
   (s/def :user/clearance :level/ident)
-  
-  (def test-db (create-db schema))
-  (satisfies? db-internals/IDB test-db)
-  (satisfies? db-internals/ISearch test-db)
-  (satisfies? db-internals/IIndexAccess test-db)
-  (d/db? test-db)
 
   (count (db-internals/-search (create-db schema 100) [100]))
   (db-internals/-search (create-db schema) [100 :doc/name "BUS SCHEDULE"])
@@ -105,4 +119,5 @@
          [(clojure.core/first ?uname) ?uchar]
          [(= ?uchar ?dchar)]] (create-db schema 100))
 
-  (d/pull-many (create-db schema) '[:doc/name :doc/level] (range 5)))
+  (d/pull-many (create-db schema) '[:doc/name :doc/level] (range 5))
+  )
